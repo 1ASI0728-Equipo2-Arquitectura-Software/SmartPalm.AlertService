@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="SmartPalm.AlertService.API/SmartPalm.AlertService.API.csproj" />
+  <Project Path="SmartPalm.AlertService.API.Tests/SmartPalm.AlertService.API.Tests.csproj" />
+</Solution>

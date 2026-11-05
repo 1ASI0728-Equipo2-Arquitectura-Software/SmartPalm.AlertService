@@ -1,0 +1,15 @@
+@host = http://localhost:5105
+@token = replace-with-jwt
+
+GET {{host}}/health/ready
+
+###
+GET {{host}}/api/v1/alerts
+Authorization: Bearer {{token}}
+
+###
+PUT {{host}}/api/v1/alert-settings/Temperature
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "isMuted": true }

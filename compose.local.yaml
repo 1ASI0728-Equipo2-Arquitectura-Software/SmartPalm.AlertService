@@ -1,0 +1,36 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: smartpalm_alert
+      POSTGRES_USER: smartpalm_alert
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports: ["${POSTGRES_PORT:-5437}:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smartpalm_alert -d smartpalm_alert"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes: ["alert-postgres:/var/lib/postgresql/data"]
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    profiles: ["isolated"]
+    ports: ["${RABBITMQ_PORT:-5672}:5672", "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"]
+  alert-api:
+    build: { context: . }
+    profiles: ["api"]
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__AlertDatabase: Host=postgres;Port=5432;Database=smartpalm_alert;Username=smartpalm_alert;Password=${POSTGRES_PASSWORD}
+      Jwt__Issuer: smartpalm.identity
+      Jwt__Audience: smartpalm.clients
+      Jwt__Key: ${JWT_KEY}
+      RabbitMq__Enabled: "true"
+      RabbitMq__Uri: ${RABBITMQ_URI:-amqp://guest:guest@host.docker.internal:5672/}
+      Firebase__Enabled: ${FIREBASE_ENABLED:-false}
+      Firebase__CredentialsJson: ${FIREBASE_CREDENTIALS_JSON:-}
+    ports: ["${ALERT_API_PORT:-5105}:8080"]
+    depends_on:
+      postgres: { condition: service_healthy }
+volumes: { alert-postgres: {} }
