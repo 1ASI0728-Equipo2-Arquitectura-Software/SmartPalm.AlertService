@@ -17,7 +17,8 @@ internal class IntegrationEventConsumer(IServiceScopeFactory scopes, IOptions<Ra
     private static readonly string[] RoutingKeys =
     [
         "ingestion.threshold-exceeded.v1", "crop.plantation-created.v1", "crop.sector-assigned.v1",
-        "crop.sector-removed.v1", "crop.agronomist-affiliated.v1", "crop.agronomist-detached.v1"
+        "crop.sector-removed.v1", "crop.agronomist-affiliated.v1", "crop.agronomist-detached.v1",
+        "smartpalm.identity.user-deletion-requested.v1"
     ];
 
     protected override async Task ExecuteAsync(CancellationToken token)
@@ -57,6 +58,8 @@ internal class IntegrationEventConsumer(IServiceScopeFactory scopes, IOptions<Ra
                     case "crop.sector-removed.v1": await handlers.HandleAsync(id, Deserialize<SectorRemovedIntegrationEvent>(body), token); break;
                     case "crop.agronomist-affiliated.v1": await handlers.HandleAsync(id, Deserialize<AgronomistAffiliatedIntegrationEvent>(body), token); break;
                     case "crop.agronomist-detached.v1": await handlers.HandleAsync(id, Deserialize<AgronomistDetachedIntegrationEvent>(body), token); break;
+                    case "smartpalm.identity.user-deletion-requested.v1": await handlers.HandleAsync(
+                        DeserializePayload<UserDeletionRequestedIntegrationEvent>(body), token); break;
                 }
                 await channel.BasicAckAsync(args.DeliveryTag, false, token);
             }
@@ -68,6 +71,16 @@ internal class IntegrationEventConsumer(IServiceScopeFactory scopes, IOptions<Ra
 
     private static T Deserialize<T>(byte[] body) => JsonSerializer.Deserialize<T>(body, JsonOptions)
         ?? throw new JsonException($"Invalid {typeof(T).Name} payload.");
+
+    private static T DeserializePayload<T>(byte[] body)
+    {
+        using var document = JsonDocument.Parse(body);
+        var payload = document.RootElement.TryGetProperty("payload", out var value)
+            ? value
+            : document.RootElement;
+        return payload.Deserialize<T>(JsonOptions)
+            ?? throw new JsonException($"Invalid {typeof(T).Name} payload.");
+    }
 
     private static JsonSerializerOptions CreateJsonOptions()
     {
