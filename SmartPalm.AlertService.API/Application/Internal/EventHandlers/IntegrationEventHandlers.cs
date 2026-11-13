@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using SmartPalm.AlertService.Application.Ports;
 using SmartPalm.AlertService.Domain.Model.Aggregates;
 using SmartPalm.AlertService.Domain.Model.Entities;
@@ -5,14 +6,68 @@ using SmartPalm.AlertService.Domain.Model.Events;
 using SmartPalm.AlertService.Domain.Model.ValueObjects;
 using SmartPalm.AlertService.Domain.Repositories;
 using SmartPalm.AlertService.Domain.Services;
+using SmartPalm.AlertService.Infrastructure.Messaging;
+using SmartPalm.AlertService.Infrastructure.Persistence;
 
 namespace SmartPalm.AlertService.Application.EventHandlers;
 
 public class IntegrationEventHandlers(IAlertRepository alerts, IUserAlertSettingRepository settings,
     IProjectionRepository projections, INotificationDeliveryRepository deliveries, IInbox inbox,
     IUnitOfWork unitOfWork, IIntegrationEventWriter events, AlertClassificationPolicy classification,
-    DuplicateAlertPolicy duplicatePolicy, ILogger<IntegrationEventHandlers> logger)
+    DuplicateAlertPolicy duplicatePolicy, ILogger<IntegrationEventHandlers> logger, AlertDbContext db)
 {
+    public async Task HandleAsync(UserDeletionRequestedIntegrationEvent value, CancellationToken token)
+    {
+        const string eventType = "smartpalm.identity.user-deletion-requested.v1";
+        if (await db.InboxMessages.AnyAsync(x => x.Id == value.OperationId, token)) return;
+
+        var plantationIds = await db.PlantationProjections
+            .Where(x => x.PalmGrowerId == value.UserId)
+            .Select(x => x.Id)
+            .ToArrayAsync(token);
+        var sectorIds = await db.SectorProjections
+            .Where(x => plantationIds.Contains(x.PlantationId))
+            .Select(x => x.SectorId)
+            .ToArrayAsync(token);
+        var alertIds = await db.Alerts
+            .Where(x => x.UserId == value.UserId
+                || plantationIds.Contains(x.PlantationId ?? 0)
+                || sectorIds.Contains(x.SectorId ?? 0))
+            .Select(x => x.Id)
+            .ToArrayAsync(token);
+
+        var deleted = 0;
+        deleted += await db.NotificationDeliveries
+            .Where(x => x.UserId == value.UserId || alertIds.Contains(x.AlertId))
+            .ExecuteDeleteAsync(token);
+        deleted += await db.Alerts
+            .Where(x => alertIds.Contains(x.Id))
+            .ExecuteDeleteAsync(token);
+        deleted += await db.UserAlertSettings
+            .Where(x => x.UserId == value.UserId)
+            .ExecuteDeleteAsync(token);
+        deleted += await db.AgronomistAffiliations
+            .Where(x => x.AgronomistId == value.UserId || plantationIds.Contains(x.PlantationId))
+            .ExecuteDeleteAsync(token);
+        deleted += await db.SectorProjections
+            .Where(x => plantationIds.Contains(x.PlantationId))
+            .ExecuteDeleteAsync(token);
+        deleted += await db.PlantationProjections
+            .Where(x => x.PalmGrowerId == value.UserId)
+            .ExecuteDeleteAsync(token);
+
+        db.InboxMessages.Add(new InboxMessage
+        {
+            Id = value.OperationId,
+            EventType = eventType,
+            ProcessedOnUtc = DateTime.UtcNow
+        });
+        events.Enqueue("smartpalm.identity.user-deletion-service-completed.v1",
+            new UserDeletionServiceCompletedIntegrationEvent(
+                value.OperationId, value.UserId, "alert", deleted, DateTime.UtcNow));
+        await db.SaveChangesAsync(token);
+    }
+
     public Task HandleAsync(Guid id, ThresholdExceededIntegrationEvent value, CancellationToken token) =>
         OnceAsync(id, "ingestion.threshold-exceeded.v1", async transactionToken =>
         {
